@@ -109,6 +109,7 @@ class UI_Work():
         self.ui.clear_log_btn.clicked.connect(self.slot_clear_log)
         self.ui.save_img_path_btn.clicked.connect(self.slot_change_save_file_path)
         self.ui.save_path_lineEdit.setText(g_save_file_path)
+        self.ui.log_plainTextEdit.document().setMaximumBlockCount(2000)
         self.ui.pages_lineEdit.setValidator(
             QRegularExpressionValidator(QRegularExpression(r'[1-9][0-9]*'), self.ui)
         )

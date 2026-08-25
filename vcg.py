@@ -276,7 +276,16 @@ class Download:
             if image_urls is None:
                 image_urls = self.parse_web()
             else:
-                image_urls = list(dict.fromkeys(image_urls))
+                unique_urls = []
+                seen_urls = set()
+                for image_url in image_urls:
+                    if image_url in seen_urls:
+                        continue
+                    seen_urls.add(image_url)
+                    unique_urls.append(image_url)
+                    if len(unique_urls) >= self.target_count:
+                        break
+                image_urls = unique_urls
                 if not image_urls:
                     raise RuntimeError("浏览器未提取到任何图片地址")
             image_urls = image_urls[:self.target_count]
@@ -310,6 +319,7 @@ class Download:
                 future_map[pool.submit(self._download_one, index, src)] = (index, src)
 
             completed = 0
+            last_progress = -1
             while future_map:
                 done, _ = wait(future_map, return_when=FIRST_COMPLETED)
                 for future in done:
@@ -319,17 +329,34 @@ class Download:
                         result, file_name = future.result()
                         if result == "saved":
                             saved += 1
-                            self.trans_log_to_ui("已保存：{0}".format(file_name))
+                            if (
+                                total <= 200
+                                or completed <= 20
+                                or completed % 100 == 0
+                                or completed == total
+                            ):
+                                self.trans_log_to_ui("已保存：{0}".format(file_name))
                         else:
                             skipped += 1
-                            self.trans_log_to_ui("已存在，跳过：{0}".format(file_name))
+                            if (
+                                total <= 200
+                                or completed <= 20
+                                or completed % 100 == 0
+                                or completed == total
+                            ):
+                                self.trans_log_to_ui(
+                                    "已存在，跳过：{0}".format(file_name)
+                                )
                     except Exception as exc:
                         failed += 1
                         host = urlparse(src).netloc
                         self.trans_log_to_ui(
                             "第 {0} 张下载失败（{1}）：{2}".format(index, host, exc)
                         )
-                    self.update_img_progress(round(completed / total * 100))
+                    progress = round(completed / total * 100)
+                    if progress != last_progress:
+                        last_progress = progress
+                        self.update_img_progress(progress)
 
                     try:
                         next_index, next_src = next(image_iter)
@@ -532,41 +559,52 @@ class Download:
                 if not new_details:
                     break
 
-                self.trans_log_to_ui(
-                    "正在读取本页 {0} 个作品的高清原图地址……".format(
-                        len(new_details)
+                detail_offset = 0
+                while (
+                    detail_offset < len(new_details)
+                    and len(image_urls) < self.target_count
+                ):
+                    remaining = self.target_count - len(image_urls)
+                    detail_batch = new_details[
+                        detail_offset:detail_offset + remaining
+                    ]
+                    detail_offset += len(detail_batch)
+                    self.trans_log_to_ui(
+                        "正在读取本页 {0} 个作品的高清原图地址……".format(
+                            len(detail_batch)
+                        )
                     )
-                )
-                resolved = {}
-                workers = min(self.MAX_WORKERS, len(new_details))
-                with ThreadPoolExecutor(
-                    max_workers=workers, thread_name_prefix="bizhihui-detail"
-                ) as pool:
-                    futures = {}
-                    for detail_url in new_details:
-                        current_index = detail_index
-                        detail_index += 1
-                        futures[
-                            pool.submit(
-                                self._parse_bizhihui_detail,
-                                current_index,
-                                detail_url,
-                            )
-                        ] = detail_url
-                    for future in as_completed(futures):
-                        detail_url = futures[future]
-                        try:
-                            index, original_url, has_quark_archive = future.result()
-                            resolved[index] = original_url
-                            if has_quark_archive:
-                                quark_archive_count += 1
-                        except Exception as exc:
-                            self.trans_log_to_ui(
-                                "作品详情解析失败（{0}）：{1}".format(detail_url, exc)
-                            )
+                    resolved = {}
+                    workers = min(self.MAX_WORKERS, len(detail_batch))
+                    with ThreadPoolExecutor(
+                        max_workers=workers, thread_name_prefix="bizhihui-detail"
+                    ) as pool:
+                        futures = {}
+                        for detail_url in detail_batch:
+                            current_index = detail_index
+                            detail_index += 1
+                            futures[
+                                pool.submit(
+                                    self._parse_bizhihui_detail,
+                                    current_index,
+                                    detail_url,
+                                )
+                            ] = detail_url
+                        for future in as_completed(futures):
+                            detail_url = futures[future]
+                            try:
+                                index, original_url, has_quark_archive = future.result()
+                                resolved[index] = original_url
+                                if has_quark_archive:
+                                    quark_archive_count += 1
+                            except Exception as exc:
+                                self.trans_log_to_ui(
+                                    "作品详情解析失败（{0}）：{1}".format(
+                                        detail_url, exc
+                                    )
+                                )
 
-                image_urls.extend(resolved[index] for index in sorted(resolved))
-                image_urls = image_urls[:self.target_count]
+                    image_urls.extend(resolved[index] for index in sorted(resolved))
                 self.trans_log_to_ui(
                     "已累计解析 {0} 张最高直链画质图片".format(len(image_urls))
                 )
@@ -615,7 +653,9 @@ class Child_Process:
         self.down.child_process_status_queue = queue2
         self.down.child_process_log_queue = queue3
         try:
-            self.down.save_img_to_local(self.image_urls)
+            image_urls = self.image_urls
+            self.image_urls = None
+            self.down.save_img_to_local(image_urls)
         except Exception as exc:
             self.down.trans_log_to_ui("下载进程异常：{0}".format(exc))
             self.down._send_status("down_fail")
