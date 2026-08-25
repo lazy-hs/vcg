@@ -3,5 +3,9 @@
 
 # 开发环境
 .idea/
+.venv/
 __pycache__/
 *.pyc
+/build/
+/dist/
+/release/

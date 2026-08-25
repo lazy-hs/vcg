@@ -13,7 +13,7 @@
   <property name="minimumSize">
    <size>
     <width>880</width>
-    <height>560</height>
+    <height>650</height>
    </size>
   </property>
   <property name="windowTitle">
@@ -39,14 +39,23 @@ QLabel#titleLabel {
 QLabel#subtitleLabel, QLabel#time_label, QLabel#logHintLabel, QLabel#sourceHintLabel {
     color: #7A8699;
 }
+QLabel#version_label {
+    color: #A5AFBF;
+    font-size: 11px;
+    font-weight: 500;
+}
 QLabel#sectionTitle, QLabel#logTitle {
     color: #172033;
     font-size: 17px;
     font-weight: 700;
 }
-QLabel#label, QLabel#label_2, QLabel#label_3, QLabel#label_4, QLabel#source_label, QLabel#label_5 {
+QLabel#label, QLabel#label_2, QLabel#label_3, QLabel#label_4, QLabel#source_label, QLabel#worker_label, QLabel#label_5 {
     color: #526074;
     font-weight: 600;
+    min-height: 20px;
+}
+QLabel#sourceHintLabel {
+    min-height: 22px;
 }
 QLineEdit, QComboBox {
     min-height: 24px;
@@ -118,18 +127,63 @@ QPlainTextEdit {
     font-size: 13px;
 }
 QProgressBar {
-    min-height: 16px;
-    max-height: 16px;
-    color: #667085;
+    min-height: 12px;
+    max-height: 12px;
     background: #E8EDF5;
     border: none;
-    border-radius: 8px;
-    text-align: center;
-    font-size: 11px;
+    border-radius: 6px;
 }
 QProgressBar::chunk {
     background: #2563EB;
-    border-radius: 8px;
+    border-radius: 6px;
+}
+QProgressBar[state="success"]::chunk {
+    background: #16A34A;
+}
+QProgressBar[state="partial"]::chunk {
+    background: #D97706;
+}
+QProgressBar[state="error"]::chunk {
+    background: #DC2626;
+}
+QLabel#progress_status_label {
+    padding: 3px 10px;
+    color: #667085;
+    background: #EEF2F7;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QLabel#progress_status_label[state="running"] {
+    color: #1D4ED8;
+    background: #E8F0FF;
+}
+QLabel#progress_status_label[state="success"] {
+    color: #15803D;
+    background: #E8F7ED;
+}
+QLabel#progress_status_label[state="partial"] {
+    color: #B45309;
+    background: #FFF4D8;
+}
+QLabel#progress_status_label[state="error"] {
+    color: #B91C1C;
+    background: #FDECEC;
+}
+QLabel#progress_percent_label {
+    min-width: 64px;
+    color: #2563EB;
+    font-size: 20px;
+    font-weight: 700;
+}
+QLabel#progress_percent_label[state="success"] {
+    color: #16A34A;
+}
+QLabel#progress_percent_label[state="partial"] {
+    color: #D97706;
+}
+QLabel#progress_percent_label[state="error"] {
+    color: #DC2626;
 }</string>
   </property>
   <layout class="QVBoxLayout" name="rootLayout">
@@ -210,20 +264,43 @@ QProgressBar::chunk {
        </spacer>
       </item>
       <item>
-       <widget class="QLabel" name="time_label">
-        <property name="minimumSize">
-         <size>
-          <width>150</width>
-          <height>24</height>
-         </size>
+       <layout class="QVBoxLayout" name="systemInfoLayout">
+        <property name="spacing">
+         <number>1</number>
         </property>
-        <property name="text">
-         <string>--</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-        </property>
-       </widget>
+        <item>
+         <widget class="QLabel" name="time_label">
+          <property name="minimumSize">
+           <size>
+            <width>150</width>
+            <height>24</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>--</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="version_label">
+          <property name="minimumSize">
+           <size>
+            <width>150</width>
+            <height>16</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>v--</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+        </item>
+       </layout>
       </item>
      </layout>
     </widget>
@@ -248,20 +325,20 @@ QProgressBar::chunk {
         </size>
        </property>
        <layout class="QVBoxLayout" name="controlLayout">
-        <property name="spacing">
-         <number>9</number>
+       <property name="spacing">
+         <number>5</number>
         </property>
         <property name="leftMargin">
          <number>20</number>
         </property>
-        <property name="topMargin">
-         <number>18</number>
+       <property name="topMargin">
+         <number>14</number>
         </property>
         <property name="rightMargin">
          <number>20</number>
         </property>
-        <property name="bottomMargin">
-         <number>18</number>
+       <property name="bottomMargin">
+         <number>14</number>
         </property>
         <item>
          <widget class="QLabel" name="sectionTitle">
@@ -278,19 +355,23 @@ QProgressBar::chunk {
          </widget>
         </item>
         <item>
-         <widget class="QComboBox" name="source_combox"/>
+         <widget class="QComboBox" name="source_combox">
+          <property name="toolTip">
+           <string>边解析边下载；壁纸汇自动选择最高直连画质</string>
+          </property>
+         </widget>
         </item>
         <item>
          <widget class="QLabel" name="label">
           <property name="text">
-           <string>搜索关键词</string>
+           <string>搜索关键词（可选）</string>
           </property>
          </widget>
         </item>
         <item>
          <widget class="QLineEdit" name="keyword_lineEdit">
           <property name="placeholderText">
-           <string>例如：风景、樱花、动漫</string>
+           <string>留空随机下载，或输入：风景、樱花、动漫</string>
           </property>
           <property name="clearButtonEnabled">
            <bool>true</bool>
@@ -298,9 +379,31 @@ QProgressBar::chunk {
          </widget>
         </item>
         <item>
-         <layout class="QHBoxLayout" name="optionLayout">
+         <widget class="QWidget" name="optionWidget">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>66</height>
+           </size>
+          </property>
+          <layout class="QHBoxLayout" name="optionLayout">
+          <property name="sizeConstraint">
+           <enum>QLayout::SetMinimumSize</enum>
+          </property>
           <property name="spacing">
            <number>12</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
           </property>
           <item>
            <layout class="QVBoxLayout" name="formatLayout">
@@ -362,6 +465,34 @@ QProgressBar::chunk {
             </item>
            </layout>
           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="workerLayout">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="worker_label">
+            <property name="minimumSize">
+             <size>
+              <width>126</width>
+              <height>0</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>下载线程</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="worker_combox">
+            <property name="toolTip">
+             <string>线程越高下载越快，但会增加内存占用并可能触发网站限流</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </item>
         <item>
@@ -400,8 +531,11 @@ QProgressBar::chunk {
         </item>
         <item>
          <widget class="QLabel" name="sourceHintLabel">
+          <property name="visible">
+           <bool>false</bool>
+          </property>
           <property name="text">
-           <string>壁纸汇默认选择网页可直接下载的最高分辨率。</string>
+           <string>边解析边下载，自动选择最高直连画质。</string>
           </property>
           <property name="wordWrap">
            <bool>true</bool>
@@ -514,45 +648,85 @@ QProgressBar::chunk {
      <property name="minimumSize">
       <size>
        <width>0</width>
-       <height>58</height>
+       <height>72</height>
       </size>
      </property>
      <property name="maximumSize">
       <size>
        <width>16777215</width>
-       <height>58</height>
+       <height>72</height>
       </size>
      </property>
-     <layout class="QHBoxLayout" name="progressLayout">
+     <layout class="QVBoxLayout" name="progressLayout">
       <property name="spacing">
-       <number>14</number>
+       <number>6</number>
       </property>
       <property name="leftMargin">
        <number>18</number>
       </property>
       <property name="topMargin">
-       <number>14</number>
+       <number>9</number>
       </property>
       <property name="rightMargin">
        <number>18</number>
       </property>
       <property name="bottomMargin">
-       <number>14</number>
+       <number>9</number>
       </property>
       <item>
-       <widget class="QLabel" name="label_5">
-        <property name="text">
-         <string>下载进度</string>
+       <layout class="QHBoxLayout" name="progressHeaderLayout">
+        <property name="spacing">
+         <number>10</number>
         </property>
-       </widget>
+        <item>
+         <widget class="QLabel" name="label_5">
+          <property name="text">
+           <string>下载进度</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="progress_status_label">
+          <property name="text">
+           <string>等待任务</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="progressHeaderSpacer">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>40</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="QLabel" name="progress_percent_label">
+          <property name="text">
+           <string>0%</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+        </item>
+       </layout>
       </item>
       <item>
        <widget class="QProgressBar" name="img_progressBar">
         <property name="value">
          <number>0</number>
         </property>
-        <property name="format">
-         <string>%p%</string>
+        <property name="textVisible">
+         <bool>false</bool>
         </property>
        </widget>
       </item>

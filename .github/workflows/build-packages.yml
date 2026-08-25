@@ -1,0 +1,48 @@
+name: Build packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: windows-package
+          - os: ubuntu-22.04
+            artifact: linux-package
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Build Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/build_windows.ps1 -SkipInstall
+
+      - name: Build Linux package
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          chmod +x packaging/build_linux.sh packaging/linux/install.sh
+          ./packaging/build_linux.sh --skip-install
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release/*
+          if-no-files-found: error

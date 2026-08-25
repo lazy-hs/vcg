@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=高清图片下载
+Comment=多来源高清图片批量下载工具
+Exec=VCGDownloader
+Icon=vcg-downloader
+Terminal=false
+Categories=Network;Graphics;Utility;
+StartupNotify=true
