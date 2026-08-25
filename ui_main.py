@@ -435,6 +435,7 @@ class UI_Work():
         )
         try:
             self.child_process_obj.start()
+            self.vcg.image_urls = None
         except Exception as exc:
             self.ui.log_plainTextEdit.appendPlainText('启动下载进程失败：{0}'.format(exc))
             self.child_process_obj = None
