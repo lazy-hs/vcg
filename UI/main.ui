@@ -353,7 +353,7 @@ QProgressBar::chunk {
                <string>20</string>
               </property>
               <property name="toolTip">
-               <string>自动翻页抓取，达到该数量后停止</string>
+               <string>输入任意正整数，无固定数量上限；程序会自动翻页</string>
               </property>
               <property name="alignment">
                <set>Qt::AlignCenter</set>

@@ -7,7 +7,14 @@ import time
 from urllib.parse import quote
 
 from PySide6.QtCore import QFile
-from PySide6.QtCore import Signal, QObject, QTimer, QDateTime, QUrl, QRegularExpression
+from PySide6.QtCore import (
+    Signal,
+    QObject,
+    QTimer,
+    QDateTime,
+    QUrl,
+    QRegularExpression,
+)
 from PySide6.QtGui import QIcon, QRegularExpressionValidator
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
