@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_version import __version__
+from app_icon import find_app_icon
 import vcg
 
 # 全局常数定义区，默认值,不更改
@@ -43,9 +44,8 @@ g_APP_DIR = (
     if getattr(sys, 'frozen', False)
     else g_SOURCE_DIR
 )
-g_APP_ICON_PATH = os.path.join(g_RESOURCE_DIR, 'ico', 'app.ico')
-if not os.path.isfile(g_APP_ICON_PATH):
-    g_APP_ICON_PATH = os.path.join(g_RESOURCE_DIR, 'ico', 'head.ico')
+g_APP_ICON_FILE = find_app_icon(os.path.join(g_RESOURCE_DIR, 'ico'))
+g_APP_ICON_PATH = str(g_APP_ICON_FILE) if g_APP_ICON_FILE is not None else ''
 g_UI_PATH = os.path.join(g_RESOURCE_DIR, 'UI', 'main.ui')
 g_SETTINGS_ORGANIZATION = 'VCGDownloader'
 g_SETTINGS_APPLICATION = 'settings'

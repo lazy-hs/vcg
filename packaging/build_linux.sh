@@ -16,7 +16,7 @@ fi
 
 python3 -m PyInstaller --noconfirm --clean packaging/vcg.spec
 
-install -m 644 ico/logo.png "$DIST_DIR/vcg-downloader.png"
+python3 packaging/prepare_linux_icon.py "$DIST_DIR/vcg-downloader.png"
 install -m 755 packaging/linux/install.sh "$DIST_DIR/install.sh"
 install -m 644 packaging/linux/vcg-downloader.desktop "$DIST_DIR/vcg-downloader.desktop"
 

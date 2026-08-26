@@ -5,14 +5,25 @@ from pathlib import Path
 # PyInstaller exposes SPECPATH as the directory containing this spec file.
 project_root = Path(SPECPATH).resolve().parent
 is_windows = sys.platform.startswith("win")
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from app_icon import find_app_icon
+
+
+icon_directory = project_root / "ico"
+selected_icon = find_app_icon(icon_directory)
+if selected_icon is None:
+    raise FileNotFoundError(
+        "No supported icon found. Add ico/logo.ico or ico/app.ico."
+    )
 
 datas = [
     (str(project_root / "UI" / "main.ui"), "UI"),
-    (str(project_root / "ico" / "app.ico"), "ico"),
-    (str(project_root / "ico" / "head.ico"), "ico"),
-    (str(project_root / "ico" / "Big.ico"), "ico"),
-    (str(project_root / "ico" / "logo.png"), "ico"),
+    (str(selected_icon), "ico"),
 ]
+
+print("Application icon: {0}".format(selected_icon))
 
 hiddenimports = [
     "PySide6.QtWebEngineCore",
@@ -55,7 +66,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(project_root / "ico" / "app.ico") if is_windows else None,
+    icon=str(selected_icon) if is_windows else None,
     version=(
         str(project_root / "packaging" / "windows_version_info.txt")
         if is_windows

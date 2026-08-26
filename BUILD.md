@@ -262,3 +262,65 @@ sudo apt install libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
 ### Windows 显示“未知发布者”
 
 当前 EXE 未进行代码签名，Windows 可能显示安全提示，但不影响程序功能。正式对外发布时可以为 EXE 添加代码签名。
+
+## 8. 替换程序 Logo
+
+程序窗口、Windows EXE、任务栏和 Linux 应用菜单使用同一个 ICO 图标来源。图标目录为：
+
+```text
+ico
+```
+
+### 8.1 最便捷的替换方式
+
+准备好新的 ICO 文件，将其命名为：
+
+```text
+ico/logo.ico
+```
+
+然后重新执行 Windows 或 Linux 打包脚本即可，不需要修改任何代码。为了兼容已有项目，也可以直接覆盖 `ico/app.ico`。
+
+建议 ICO 文件：
+
+- 使用正方形图案和透明背景。
+- 至少包含 `16×16`、`32×32`、`48×48`、`128×128` 和 `256×256`。
+- 推荐先用 `1024×1024` 的 PNG 或 SVG 原图导出多尺寸 ICO。
+- 不要把 PNG 直接改名为 `.ico`，必须转换成真正的 ICO 格式。
+
+### 8.2 支持的 ICO 文件名
+
+程序只识别以下两个文件名，选择顺序为：
+
+1. `logo.ico`
+2. `app.ico`
+
+当两个文件同时存在时使用 `logo.ico`。`head.ico`、`Big.ico` 和其他自定义名称不会被程序或打包脚本选用。
+
+`logo.png` 和 `logo.svg` 可以作为设计源文件保留，但不再决定打包程序使用的图标。Linux 打包脚本会自动从选中的 ICO 生成应用菜单所需的 PNG 图标。
+
+### 8.3 重新打包
+
+Windows：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -SkipInstall
+```
+
+Linux：
+
+```bash
+./packaging/build_linux.sh --skip-install
+```
+
+替换图标后必须重新打包，直接修改已经生成的 ZIP、EXE 或 Linux 压缩包不会自动生效。
+
+### 8.4 Windows 仍显示旧图标
+
+Windows 资源管理器可能缓存旧图标。确认已经使用新包后，可以尝试：
+
+1. 删除旧快捷方式并重新创建。
+2. 将新程序解压到不同目录。
+3. 重启 Windows 资源管理器或注销后重新登录。
+
+应用窗口中显示的新图标不受旧快捷方式图标缓存影响。
