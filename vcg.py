@@ -3,7 +3,12 @@ import queue
 import re
 import threading
 import time
+import random
+import hashlib
+import json
+from contextlib import contextmanager
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
+from datetime import datetime, timezone
 from itertools import count, islice
 from urllib.parse import quote, urljoin, urlparse
 
@@ -29,9 +34,17 @@ class AccessBlockedError(RuntimeError):
 
 SOURCE_VCG = "vcg"
 SOURCE_BIZHIHUI = "bizhihui"
+SOURCE_CATAAS = "cataas"
+SOURCE_THEDOGAPI = "thedogapi"
+SOURCE_YTDLP = "ytdlp"
+SOURCE_GALLERYDL = "gallery-dl"
 SOURCE_OPTIONS = (
     ("壁纸汇（最高直链画质）", SOURCE_BIZHIHUI),
     ("视觉中国（需验证）", SOURCE_VCG),
+    ("CATAAS 猫图片", SOURCE_CATAAS),
+    ("TheDogAPI 狗图片", SOURCE_THEDOGAPI),
+    ("视频封面（yt-dlp）", SOURCE_YTDLP),
+    ("图片站点（gallery-dl）", SOURCE_GALLERYDL),
 )
 
 
@@ -103,6 +116,23 @@ class Download:
     CHUNK_SIZE = 64 * 1024
     INVALID_FILE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
     BIZHIHUI_BASE_URL = "https://www.bizhihui.com/"
+    CATAAS_API_URL = "https://cataas.com/api/cats?limit=100&skip={skip}"
+    CATAAS_IMAGE_URL = (
+        "https://cataas.com/cat/{image_id}?width=1000&height=1000&fit=cover"
+    )
+    THEDOGAPI_API_URL = (
+        "https://api.thedogapi.com/v1/images/search?limit=10&size=full"
+    )
+    MATERIAL_MIN_WIDTH = 960
+    MATERIAL_MIN_HEIGHT = 720
+    SOURCE_POLICIES = {
+        SOURCE_VCG: {"min_interval": 0.25, "jitter": 0.25, "max_inflight": 4, "cooldown": 30},
+        SOURCE_BIZHIHUI: {"min_interval": 0.45, "jitter": 0.35, "max_inflight": 4, "cooldown": 30},
+        SOURCE_CATAAS: {"min_interval": 0.60, "jitter": 0.45, "max_inflight": 4, "cooldown": 45},
+        SOURCE_THEDOGAPI: {"min_interval": 0.45, "jitter": 0.35, "max_inflight": 4, "cooldown": 30},
+        SOURCE_YTDLP: {"min_interval": 1.00, "jitter": 0.50, "max_inflight": 2, "cooldown": 60},
+        SOURCE_GALLERYDL: {"min_interval": 0.75, "jitter": 0.50, "max_inflight": 2, "cooldown": 60},
+    }
     BIZHIHUI_CATEGORY_MAP = {
         "动漫": "dongman",
         "卡通": "dongman",
@@ -159,7 +189,14 @@ class Download:
             raise ValueError("下载数量必须大于 0")
         if self.format not in ("jpg", "jpeg", "png"):
             raise ValueError("图片格式仅支持 jpg、jpeg、png")
-        if source not in (SOURCE_VCG, SOURCE_BIZHIHUI):
+        if source not in (
+            SOURCE_VCG,
+            SOURCE_BIZHIHUI,
+            SOURCE_CATAAS,
+            SOURCE_THEDOGAPI,
+            SOURCE_YTDLP,
+            SOURCE_GALLERYDL,
+        ):
             raise ValueError("不支持的图片来源：{0}".format(source))
         self.source = source
         self.source_referer = (
@@ -170,6 +207,22 @@ class Download:
         self.child_process_status_queue = None
         self.child_process_log_queue = None
         self._thread_local = None
+        self._manifest_lock = threading.Lock()
+        self._manifest_path = None
+        self._manifest_saved = 0
+        self._manifest_hashes = set()
+        policy = self.SOURCE_POLICIES[self.source]
+        self._rate_lock = threading.Lock()
+        self._request_start_lock = threading.Lock()
+        self._next_request_at = 0.0
+        self._request_gate = threading.BoundedSemaphore(policy["max_inflight"])
+        self._breaker_lock = threading.Lock()
+        self._failure_streak = 0
+        self._cooldown_until = 0.0
+        self._cooldown_count = 0
+        self._request_log_lock = threading.Lock()
+        self._request_log_path = None
+        self._request_count = 0
         self.headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -185,13 +238,18 @@ class Download:
         }
 
     def _new_session(self):
+        status_forcelist = (429, 502, 503, 504)
+        # CATAAS 的 500 常见于单张 GIF/大图的 vips 处理超时；重试同一 URL
+        # 只会重复触发服务端处理，不把 500 放入自动重试集合。
+        if self.source != SOURCE_CATAAS:
+            status_forcelist = (429, 500, 502, 503, 504)
         retry = Retry(
             total=3,
             connect=3,
             read=3,
             status=3,
             backoff_factor=0.6,
-            status_forcelist=(429, 500, 502, 503, 504),
+            status_forcelist=status_forcelist,
             allowed_methods=frozenset(("GET",)),
             respect_retry_after_header=True,
         )
@@ -201,6 +259,179 @@ class Download:
         session.mount("https://", adapter)
         session.mount("http://", adapter)
         return session
+
+    def _write_request_log(self, event, url, **details):
+        if self._request_log_path is None:
+            return
+        count_request = details.pop("_count_request", event == "response")
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": self.source,
+            "event": event,
+            "url": url,
+            **details,
+        }
+        try:
+            with self._request_log_lock:
+                with open(self._request_log_path, "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                if count_request:
+                    self._request_count += 1
+        except OSError:
+            pass
+
+    def _wait_for_request_slot(self, url):
+        policy = self.SOURCE_POLICIES[self.source]
+        while True:
+            with self._breaker_lock:
+                cooldown = max(0.0, self._cooldown_until - time.monotonic())
+            if cooldown:
+                self._write_request_log("cooldown_wait", url, seconds=round(cooldown, 3))
+                time.sleep(cooldown)
+                continue
+
+            with self._rate_lock:
+                now = time.monotonic()
+                wait_seconds = max(0.0, self._next_request_at - now)
+                if wait_seconds:
+                    self._write_request_log(
+                        "rate_limit_wait", url, seconds=round(wait_seconds, 3)
+                    )
+                    time.sleep(wait_seconds)
+                # 以实际唤醒时间重新计算下一次窗口，避免线程调度延迟
+                # 把已经预约的时间提前消耗掉，导致实际请求间隔小于策略值。
+                self._next_request_at = (
+                    time.monotonic()
+                    + policy["min_interval"]
+                    + random.uniform(0.0, policy["jitter"])
+                )
+            return
+
+    def _record_response_health(self, url, status=None, error=None):
+        transient = error is not None or status in (429, 500, 502, 503, 504)
+        if not transient:
+            with self._breaker_lock:
+                self._failure_streak = 0
+            return
+
+        policy = self.SOURCE_POLICIES[self.source]
+        with self._breaker_lock:
+            self._failure_streak += 1
+            if self._failure_streak >= 3:
+                exponent = min(self._failure_streak - 3, 4)
+                cooldown = min(300.0, policy["cooldown"] * (2 ** exponent))
+                self._cooldown_until = max(self._cooldown_until, time.monotonic() + cooldown)
+                self._cooldown_count += 1
+                self._write_request_log(
+                    "circuit_open",
+                    url,
+                    status=status,
+                    error=str(error) if error else None,
+                    failure_streak=self._failure_streak,
+                    cooldown=round(cooldown, 3),
+                )
+                self.trans_log_to_ui(
+                    "来源连续失败 {0} 次，暂停 {1}s 后继续".format(
+                        self._failure_streak, round(cooldown)
+                    )
+                )
+
+    def _request_get(self, session, url, **kwargs):
+        self._request_gate.acquire()
+        started = time.monotonic()
+        try:
+            with self._request_start_lock:
+                self._wait_for_request_slot(url)
+                response = session.get(url, **kwargs)
+            self._write_request_log(
+                "response",
+                url,
+                status=response.status_code,
+                elapsed=round(time.monotonic() - started, 3),
+                retry_after=response.headers.get("Retry-After"),
+            )
+            self._record_response_health(url, status=response.status_code)
+            return response
+        except requests.RequestException as exc:
+            self._write_request_log(
+                "exception",
+                url,
+                error=str(exc),
+                elapsed=round(time.monotonic() - started, 3),
+                _count_request=True,
+            )
+            self._record_response_health(url, error=exc)
+            raise
+        finally:
+            self._request_gate.release()
+
+    @contextmanager
+    def _request_stream(self, session, url, **kwargs):
+        """在读取响应流期间保持来源并发闸门，避免大图下载绕过限流。"""
+        self._request_gate.acquire()
+        started = time.monotonic()
+        response = None
+        try:
+            with self._request_start_lock:
+                self._wait_for_request_slot(url)
+                response = session.get(url, **kwargs)
+            self._write_request_log(
+                "response",
+                url,
+                status=response.status_code,
+                elapsed=round(time.monotonic() - started, 3),
+                retry_after=response.headers.get("Retry-After"),
+            )
+            self._record_response_health(url, status=response.status_code)
+            yield response
+        except requests.RequestException as exc:
+            self._write_request_log(
+                "exception",
+                url,
+                error=str(exc),
+                elapsed=round(time.monotonic() - started, 3),
+                _count_request=response is None,
+            )
+            if response is None:
+                self._record_response_health(url, error=exc)
+            raise
+        finally:
+            if response is not None:
+                response.close()
+            self._request_gate.release()
+
+    def __getstate__(self):
+        """让 Download 可以在 macOS spawn 子进程中安全序列化。
+
+        线程锁和线程局部 Session 只属于创建它们的进程，不能跨进程传递，
+        子进程恢复对象后会在 __setstate__ 中重新创建。
+        """
+        state = self.__dict__.copy()
+        state["_manifest_lock"] = None
+        state["_thread_local"] = None
+        state["_rate_lock"] = None
+        state["_request_start_lock"] = None
+        state["_request_gate"] = None
+        state["_breaker_lock"] = None
+        state["_request_log_lock"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._manifest_lock = threading.Lock()
+        self._thread_local = None
+        policy = self.SOURCE_POLICIES[self.source]
+        self._rate_lock = threading.Lock()
+        self._request_start_lock = threading.Lock()
+        self._request_gate = threading.BoundedSemaphore(policy["max_inflight"])
+        self._breaker_lock = threading.Lock()
+        self._request_log_lock = threading.Lock()
+        self._next_request_at = getattr(self, "_next_request_at", 0.0)
+        self._failure_streak = getattr(self, "_failure_streak", 0)
+        self._cooldown_until = getattr(self, "_cooldown_until", 0.0)
+        self._cooldown_count = getattr(self, "_cooldown_count", 0)
+        self._request_log_path = getattr(self, "_request_log_path", None)
+        self._request_count = getattr(self, "_request_count", 0)
 
     def _get_thread_session(self):
         if self._thread_local is None:
@@ -306,6 +537,14 @@ class Download:
         name_prefix = self._safe_filename_part(self.key_word or "随机")
         if self.source == SOURCE_BIZHIHUI:
             name_prefix = "壁纸汇_{0}".format(name_prefix)
+        elif self.source == SOURCE_CATAAS:
+            name_prefix = "猫_{0}".format(name_prefix)
+        elif self.source == SOURCE_THEDOGAPI:
+            name_prefix = "狗_{0}".format(name_prefix)
+        elif self.source == SOURCE_YTDLP:
+            name_prefix = "视频封面_{0}".format(name_prefix)
+        elif self.source == SOURCE_GALLERYDL:
+            name_prefix = "gallery-dl_{0}".format(name_prefix)
         file_name = "{0}_{1}.{2}".format(
             name_prefix, index, self.format
         )
@@ -315,7 +554,8 @@ class Download:
             return "skipped", file_name
 
         session = self._get_thread_session()
-        with session.get(
+        with self._request_stream(
+            session,
             src,
             headers={"Referer": self.source_referer},
             timeout=self.REQUEST_TIMEOUT,
@@ -326,7 +566,84 @@ class Download:
             if content_type and not content_type.startswith("image/"):
                 raise RuntimeError("响应不是图片：{0}".format(content_type))
             self._write_image(response, file_path)
+        try:
+            self._validate_material_dimensions(file_path)
+            if not self._append_manifest(file_path, src):
+                raise RuntimeError("素材内容重复，已跳过")
+        except Exception:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            raise
         return "saved", file_name
+
+    def _validate_material_dimensions(self, file_path):
+        if self.source not in (SOURCE_CATAAS, SOURCE_THEDOGAPI) or Image is None:
+            return
+        with Image.open(file_path) as image:
+            if image.width < self.MATERIAL_MIN_WIDTH or image.height < self.MATERIAL_MIN_HEIGHT:
+                raise RuntimeError(
+                    "图片分辨率过低：{0}x{1}，最低要求 {2}x{3}".format(
+                        image.width,
+                        image.height,
+                        self.MATERIAL_MIN_WIDTH,
+                        self.MATERIAL_MIN_HEIGHT,
+                    )
+                )
+
+    def _source_metadata(self, src):
+        metadata = {
+            "source": self.source,
+            "source_url": src,
+            "keyword": self.key_word,
+            "category": "general",
+        }
+        if self.source == SOURCE_CATAAS:
+            metadata["category"] = "cat"
+            match = re.search(r"/cat/([^?/#]+)", src)
+            if match:
+                metadata["source_id"] = match.group(1)
+        elif self.source == SOURCE_THEDOGAPI:
+            metadata["category"] = "dog"
+            metadata["source_id"] = os.path.splitext(urlparse(src).path.rsplit("/", 1)[-1])[0]
+        elif self.source == SOURCE_YTDLP:
+            metadata["category"] = "video-cover"
+        elif self.source == SOURCE_GALLERYDL:
+            metadata["category"] = "gallery"
+        return metadata
+
+    def _append_manifest(self, file_path, src):
+        if self._manifest_path is None:
+            return True
+        try:
+            with open(file_path, "rb") as file_obj:
+                digest = hashlib.sha256(file_obj.read()).hexdigest()
+            metadata = self._source_metadata(src)
+            if Image is not None:
+                with Image.open(file_path) as image:
+                    metadata.update({
+                        "width": image.width,
+                        "height": image.height,
+                        "format": image.format,
+                    })
+            metadata.update({
+                "filename": os.path.basename(file_path),
+                "sha256": digest,
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "license": "source-license-to-review",
+            })
+            with self._manifest_lock:
+                if digest in self._manifest_hashes:
+                    return False
+                with open(self._manifest_path, "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(metadata, ensure_ascii=False) + "\n")
+                self._manifest_hashes.add(digest)
+                self._manifest_saved += 1
+            return True
+        except (OSError, ValueError) as exc:
+            self.trans_log_to_ui("写入素材清单失败：{0}".format(exc))
+            return True
 
     def _existing_file_is_valid(self, file_path):
         if not os.path.isfile(file_path) or os.path.getsize(file_path) == 0:
@@ -353,6 +670,27 @@ class Download:
             self.trans_log_to_ui("下载失败：{0}".format(exc))
             self._send_status("down_fail")
             return
+
+        self._manifest_path = os.path.join(self.save_file_path, "manifest.jsonl")
+        self._request_log_path = os.path.join(self.save_file_path, "request_log.jsonl")
+        self._request_count = 0
+        self._cooldown_count = 0
+        self._manifest_saved = 0
+        self._manifest_hashes = set()
+        try:
+            if os.path.isfile(self._manifest_path) and os.path.getsize(self._manifest_path) > 0:
+                self.trans_log_to_ui("素材清单已存在，本次新增记录会追加到 manifest.jsonl")
+                with open(self._manifest_path, "r", encoding="utf-8") as handle:
+                    for line in handle:
+                        try:
+                            record = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        digest = record.get("sha256") if isinstance(record, dict) else None
+                        if digest:
+                            self._manifest_hashes.add(digest)
+        except OSError:
+            pass
 
         def unique_image_urls():
             seen_urls = set()
@@ -491,6 +829,33 @@ class Download:
                 fulfilled, self.target_count, saved, skipped, failed, elapsed
             )
         )
+        try:
+            with open(
+                os.path.join(self.save_file_path, "manifest_summary.json"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                json.dump(
+                    {
+                        "source": self.source,
+                        "keyword": self.key_word,
+                        "target_count": self.target_count,
+                        "fulfilled": fulfilled,
+                        "saved": saved,
+                        "skipped": skipped,
+                        "failed": failed,
+                        "manifest_records_added": self._manifest_saved,
+                        "request_count": self._request_count,
+                        "cooldown_count": self._cooldown_count,
+                        "policy": self.SOURCE_POLICIES[self.source],
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    handle,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+        except OSError as exc:
+            self.trans_log_to_ui("写入素材汇总失败：{0}".format(exc))
         if fulfilled >= self.target_count:
             self._send_status("down_success")
         elif fulfilled > 0:
@@ -512,7 +877,141 @@ class Download:
     def iter_web(self):
         if self.source == SOURCE_BIZHIHUI:
             return self._iter_bizhihui_web()
+        if self.source == SOURCE_CATAAS:
+            return self._iter_cataas_web()
+        if self.source == SOURCE_THEDOGAPI:
+            return self._iter_thedogapi_web()
+        if self.source == SOURCE_YTDLP:
+            return self._iter_ytdlp_web()
+        if self.source == SOURCE_GALLERYDL:
+            return self._iter_gallerydl_web()
         return self._iter_vcg_web()
+
+    def _iter_cataas_web(self):
+        session = self._new_session()
+        seen = set()
+        skip = 0
+        try:
+            while True:
+                url = self.CATAAS_API_URL.format(skip=skip)
+                response = self._request_get(
+                    session,
+                    url,
+                    headers={"Accept": "application/json"},
+                    timeout=self.REQUEST_TIMEOUT,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, list) or not payload:
+                    break
+                added = 0
+                for item in payload:
+                    if not isinstance(item, dict) or not item.get("id"):
+                        continue
+                    # CATAAS 的 GIF 原图通常很小，但经过 vips 的 1000x1000
+                    # 服务端缩放会触发处理超时并返回 500；宠物高清素材也不需要 GIF。
+                    if str(item.get("mimetype", "")).lower() == "image/gif":
+                        continue
+                    image_id = str(item["id"])
+                    if image_id in seen:
+                        continue
+                    seen.add(image_id)
+                    added += 1
+                    yield self.CATAAS_IMAGE_URL.format(image_id=quote(image_id, safe=""))
+                self.trans_log_to_ui(
+                    "CATAAS 已发现 {0} 张猫图片".format(len(seen))
+                )
+                if added == 0:
+                    break
+                skip += len(payload)
+        finally:
+            session.close()
+
+    def _iter_thedogapi_web(self):
+        session = self._new_session()
+        seen = set()
+        try:
+            while True:
+                response = self._request_get(
+                    session,
+                    self.THEDOGAPI_API_URL,
+                    headers={"Accept": "application/json"},
+                    timeout=self.REQUEST_TIMEOUT,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, list) or not payload:
+                    break
+                added = 0
+                for item in payload:
+                    if not isinstance(item, dict) or not item.get("url"):
+                        continue
+                    image_url = str(item["url"])
+                    if image_url in seen:
+                        continue
+                    seen.add(image_url)
+                    added += 1
+                    yield image_url
+                self.trans_log_to_ui(
+                    "TheDogAPI 已发现 {0} 张狗图片".format(len(seen))
+                )
+                if added == 0:
+                    break
+        finally:
+            session.close()
+
+    def _iter_ytdlp_web(self):
+        video_url = self.key_word.strip()
+        if not video_url or not urlparse(video_url).scheme:
+            raise RuntimeError("视频封面来源需要在关键词框中输入视频 URL")
+        try:
+            import yt_dlp
+        except ImportError as exc:
+            raise RuntimeError("视频封面来源需要安装 yt-dlp：pip install yt-dlp") from exc
+
+        options = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "noplaylist": False,
+            "extract_flat": False,
+        }
+        with yt_dlp.YoutubeDL(options) as downloader:
+            info = downloader.extract_info(video_url, download=False)
+        entries = info.get("entries") if isinstance(info, dict) else None
+        if entries:
+            for entry in entries:
+                if not isinstance(entry, dict) or not entry.get("thumbnail"):
+                    continue
+                yield str(entry["thumbnail"])
+            return
+        if isinstance(info, dict) and info.get("thumbnail"):
+            yield str(info["thumbnail"])
+            return
+        raise RuntimeError("yt-dlp 未返回视频封面 URL")
+
+    def _iter_gallerydl_web(self):
+        source_url = self.key_word.strip()
+        if not source_url or not urlparse(source_url).scheme:
+            raise RuntimeError("gallery-dl 来源需要在关键词框中输入图片站点 URL")
+        try:
+            from gallery_dl import job
+        except ImportError as exc:
+            raise RuntimeError("gallery-dl 来源需要安装 gallery-dl：pip install gallery-dl") from exc
+
+        collector = job.DataJob(source_url, file=None)
+        collector.run()
+        if collector.exception:
+            raise RuntimeError("gallery-dl 解析失败：{0}".format(collector.exception))
+        seen = set()
+        for image_url in collector.data_urls:
+            image_url = str(image_url)
+            if image_url in seen:
+                continue
+            seen.add(image_url)
+            yield image_url
+        if not seen:
+            raise RuntimeError("gallery-dl 未找到图片 URL")
 
     # 解析视觉中国网页，拿到预览图片 URL
     def _parse_vcg_web(self):
@@ -534,7 +1033,7 @@ class Download:
                     url = self.RANDOM_PAGE_URL.format(page=page)
                 self.trans_log_to_ui("开始请求第 {0} 页".format(page))
                 try:
-                    response = session.get(url, timeout=self.REQUEST_TIMEOUT)
+                    response = self._request_get(session, url, timeout=self.REQUEST_TIMEOUT)
                     if response.status_code == 404:
                         self.trans_log_to_ui("没有第 {0} 页，停止翻页".format(page))
                         break
@@ -643,7 +1142,8 @@ class Download:
 
     def _parse_bizhihui_detail(self, index, detail_url):
         session = self._get_thread_session()
-        response = session.get(
+        response = self._request_get(
+            session,
             detail_url,
             headers={"Referer": self.BIZHIHUI_BASE_URL},
             timeout=self.REQUEST_TIMEOUT,
@@ -707,7 +1207,8 @@ class Download:
                 page_url = self._bizhihui_page_url(listing_url, page)
                 self.trans_log_to_ui("开始解析壁纸汇第 {0} 页".format(page))
                 try:
-                    response = session.get(
+                    response = self._request_get(
+                        session,
                         page_url,
                         headers={"Referer": self.BIZHIHUI_BASE_URL},
                         timeout=self.REQUEST_TIMEOUT,

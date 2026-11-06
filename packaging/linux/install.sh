@@ -13,7 +13,7 @@ install -m 644 "$SOURCE_DIR/vcg-downloader.png" "$ICON_DIR/vcg-downloader.png"
 cat > "$DESKTOP_DIR/vcg-downloader.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=高清图片下载
+Name=素材采集工作台
 Comment=多来源高清图片批量下载工具
 Exec=$APP_DIR/VCGDownloader
 Icon=vcg-downloader
@@ -27,4 +27,4 @@ command -v update-desktop-database >/dev/null 2>&1 \
     && update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 \
     || true
 
-printf '安装完成，可从应用菜单启动“高清图片下载”。\n'
+printf '安装完成，可从应用菜单启动“素材采集工作台”。\n'

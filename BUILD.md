@@ -161,7 +161,7 @@ chmod +x install.sh
 ~/.local/share/icons/hicolor/256x256/apps/vcg-downloader.png
 ```
 
-安装后可以从桌面环境的应用菜单启动“高清图片下载”。
+安装后可以从桌面环境的应用菜单启动“素材采集工作台”。
 
 ### 3.5 Linux 兼容性
 

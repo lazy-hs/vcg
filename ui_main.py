@@ -180,6 +180,21 @@ class UI_Work():
         self.source_combox.clear()
         for label, source_id in vcg.SOURCE_OPTIONS:
             self.source_combox.addItem(label, source_id)
+        self.source_combox.currentIndexChanged.connect(self.update_source_hint)
+        self.update_source_hint()
+
+    def update_source_hint(self):
+        hints = {
+            vcg.SOURCE_VCG: '视觉中国需要在内嵌网页中完成安全验证，下载会自动限速和冷却。',
+            vcg.SOURCE_BIZHIHUI: '壁纸汇自动解析详情页并选择最高直链画质，下载会自动限速。',
+            vcg.SOURCE_CATAAS: 'CATAAS 提供猫图片，最多 4 路并发，自动延迟、冷却并记录 SHA-256。',
+            vcg.SOURCE_THEDOGAPI: 'TheDogAPI 提供狗图片，最多 4 路并发，自动延迟、冷却并记录 SHA-256。',
+            vcg.SOURCE_YTDLP: '输入视频 URL，使用 yt-dlp 获取视频封面，最多 2 路并发并自动限速。',
+            vcg.SOURCE_GALLERYDL: '输入图片站点 URL，使用 gallery-dl 解析图片，最多 2 路并发并自动限速。',
+        }
+        source = self.source_combox.currentData()
+        self.ui.sourceHintLabel.setText(hints.get(source, '统一记录素材来源和下载状态。'))
+        self.ui.sourceHintLabel.setVisible(True)
 
     def init_worker_selector(self):
         recommended = self.worker_profile['recommended']
@@ -840,8 +855,8 @@ if __name__ == '__main__':
         except (AttributeError, OSError):
             pass
     app = QApplication([])  # 初始化应用
-    app.setApplicationName('高清图片下载')
-    app.setApplicationDisplayName('高清图片下载')
+    app.setApplicationName('素材采集工作台')
+    app.setApplicationDisplayName('素材采集工作台')
     app.setWindowIcon(QIcon(g_APP_ICON_PATH))  # 主界面和任务栏图标
     main = UI_Work()  # 实例化对象
     main.ui.show()  # 加载UI显示所有的控件在界面上

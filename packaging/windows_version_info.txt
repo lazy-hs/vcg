@@ -15,11 +15,11 @@ VSVersionInfo(
         '080404B0',
         [
           StringStruct('CompanyName', 'VCG Downloader'),
-          StringStruct('FileDescription', '高清图片下载'),
+          StringStruct('FileDescription', '素材采集工作台'),
           StringStruct('FileVersion', '1.0.0'),
           StringStruct('InternalName', 'VCGDownloader'),
           StringStruct('OriginalFilename', 'VCGDownloader.exe'),
-          StringStruct('ProductName', '高清图片下载'),
+          StringStruct('ProductName', '素材采集工作台'),
           StringStruct('ProductVersion', '1.0.0')
         ]
       )

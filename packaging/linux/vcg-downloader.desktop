@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=高清图片下载
-Comment=多来源高清图片批量下载工具
+Name=素材采集工作台
+Comment=多来源高清素材采集工具
 Exec=VCGDownloader
 Icon=vcg-downloader
 Terminal=false

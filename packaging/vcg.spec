@@ -9,6 +9,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from app_icon import find_app_icon
+from PyInstaller.utils.hooks import collect_submodules
 
 
 icon_directory = project_root / "ico"
@@ -30,7 +31,7 @@ hiddenimports = [
     "PySide6.QtWebEngineWidgets",
     "PySide6.QtWebChannel",
     "xpinyin",
-]
+] + collect_submodules("gallery_dl")
 
 analysis = Analysis(
     [str(project_root / "ui_main.py")],
