@@ -1,6 +1,6 @@
 # 素材采集工作台
 
-本项目保留原有视觉中国和壁纸汇采集能力，并增加猫狗图片来源。所有来源共用同一套下载进程、线程池、图片校验和日志机制。
+本项目保留原有视觉中国和壁纸汇采集能力，并增加猫狗图片和真实人像头像来源。所有来源共用同一套下载进程、线程池、图片校验和日志机制。
 
 ## 来源
 
@@ -10,6 +10,8 @@
 | 视觉中国（需验证） | `vcg` | 原有来源，使用内嵌网页完成安全验证 |
 | CATAAS 猫图片 | `cataas` | 公开猫图片接口，统一请求 1000×1000 |
 | TheDogAPI 狗图片 | `thedogapi` | 公开狗图片接口，按原图尺寸下载 |
+| 真实人像头像（Random User） | `randomuser` | Random User 公开人像接口，约 128×128，支持男/女筛选 |
+| 百度图片（真人搜索） | `baidu` | 通过百度图片搜索接口获取真人图片候选，记录来源页 |
 | 视频封面（yt-dlp） | `ytdlp` | 在关键词框输入视频 URL，提取视频封面 |
 | 图片站点（gallery-dl） | `gallery-dl` | 在关键词框输入 gallery-dl 支持的图片站点 URL |
 
@@ -32,13 +34,17 @@
 ## 使用方式
 
 1. 在“图片来源”中选择来源
-2. 输入关键词；CATAAS 和 TheDogAPI 当前按随机图片接口采集，关键词会记录到清单
+2. 输入关键词；CATAAS 和 TheDogAPI 当前按随机图片接口采集，Random User 可输入“男”或“女”筛选，百度图片可输入“真人头像”“男性肖像”等关键词，关键词会记录到清单
 3. 设置格式、数量、线程和保存路径
 4. 点击“开始下载”
 
-视觉中国仍会弹出安全验证窗口。壁纸汇、CATAAS 和 TheDogAPI 直接使用下载子进程。
+视觉中国仍会弹出安全验证窗口。壁纸汇、CATAAS、TheDogAPI、Random User 和百度图片直接使用下载子进程。
 视频封面来源需要在关键词框输入视频 URL，并依赖 `yt-dlp`。
 图片站点来源需要在关键词框输入图片站点 URL，并依赖 `gallery-dl`。
+
+Random User 来源使用 `https://randomuser.me/api/`，请求只包含 `picture` 字段，下载其大图肖像 URL；当前接口返回的头像约为 128×128，适合头像或人脸占位素材。该服务的照片来自其授权的 UI Faces 集合。公开发布或商业使用前仍需根据来源条款复核授权，不把图片自动视为 CC0。
+
+百度图片来源使用公开搜索接口 `https://image.baidu.com/search/acjson`，优先下载搜索结果的 `middleURL`，同时在清单中保存百度搜索页和结果标题。百度结果可能包含转载、重复、非真人或受版权保护的图片，程序不会替用户确认人物身份或授权。
 
 ## 开发验证
 
@@ -47,14 +53,14 @@ python -m py_compile vcg.py ui_main.py
 python -m pip install -r requirements.txt
 ```
 
-可用临时目录验证猫狗来源：
+可用临时目录验证猫狗和人像来源：
 
 ```bash
 python - <<'PY'
 import tempfile
-from vcg import Download, SOURCE_CATAAS, SOURCE_THEDOGAPI
+from vcg import Download, SOURCE_CATAAS, SOURCE_THEDOGAPI, SOURCE_RANDOMUSER, SOURCE_BAIDU
 
-for source in (SOURCE_CATAAS, SOURCE_THEDOGAPI):
+for source in (SOURCE_CATAAS, SOURCE_THEDOGAPI, SOURCE_RANDOMUSER, SOURCE_BAIDU):
     worker = Download("", 2, "jpg", source=source, download_workers=2)
     worker.save_file_path = tempfile.mkdtemp(prefix="vcg-material-")
     worker.save_img_to_local()

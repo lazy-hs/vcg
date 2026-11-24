@@ -36,6 +36,8 @@ SOURCE_VCG = "vcg"
 SOURCE_BIZHIHUI = "bizhihui"
 SOURCE_CATAAS = "cataas"
 SOURCE_THEDOGAPI = "thedogapi"
+SOURCE_RANDOMUSER = "randomuser"
+SOURCE_BAIDU = "baidu"
 SOURCE_YTDLP = "ytdlp"
 SOURCE_GALLERYDL = "gallery-dl"
 SOURCE_OPTIONS = (
@@ -43,6 +45,8 @@ SOURCE_OPTIONS = (
     ("视觉中国（需验证）", SOURCE_VCG),
     ("CATAAS 猫图片", SOURCE_CATAAS),
     ("TheDogAPI 狗图片", SOURCE_THEDOGAPI),
+    ("真实人像头像（Random User）", SOURCE_RANDOMUSER),
+    ("百度图片（真人搜索）", SOURCE_BAIDU),
     ("视频封面（yt-dlp）", SOURCE_YTDLP),
     ("图片站点（gallery-dl）", SOURCE_GALLERYDL),
 )
@@ -116,6 +120,8 @@ class Download:
     CHUNK_SIZE = 64 * 1024
     INVALID_FILE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
     BIZHIHUI_BASE_URL = "https://www.bizhihui.com/"
+    RANDOMUSER_BASE_URL = "https://randomuser.me/"
+    BAIDU_BASE_URL = "https://image.baidu.com/"
     CATAAS_API_URL = "https://cataas.com/api/cats?limit=100&skip={skip}"
     CATAAS_IMAGE_URL = (
         "https://cataas.com/cat/{image_id}?width=1000&height=1000&fit=cover"
@@ -123,6 +129,8 @@ class Download:
     THEDOGAPI_API_URL = (
         "https://api.thedogapi.com/v1/images/search?limit=10&size=full"
     )
+    RANDOMUSER_API_URL = "https://randomuser.me/api/"
+    BAIDU_API_URL = "https://image.baidu.com/search/acjson"
     MATERIAL_MIN_WIDTH = 960
     MATERIAL_MIN_HEIGHT = 720
     SOURCE_POLICIES = {
@@ -130,6 +138,8 @@ class Download:
         SOURCE_BIZHIHUI: {"min_interval": 0.45, "jitter": 0.35, "max_inflight": 4, "cooldown": 30},
         SOURCE_CATAAS: {"min_interval": 0.60, "jitter": 0.45, "max_inflight": 4, "cooldown": 45},
         SOURCE_THEDOGAPI: {"min_interval": 0.45, "jitter": 0.35, "max_inflight": 4, "cooldown": 30},
+        SOURCE_RANDOMUSER: {"min_interval": 0.45, "jitter": 0.35, "max_inflight": 4, "cooldown": 30},
+        SOURCE_BAIDU: {"min_interval": 0.90, "jitter": 0.60, "max_inflight": 2, "cooldown": 60},
         SOURCE_YTDLP: {"min_interval": 1.00, "jitter": 0.50, "max_inflight": 2, "cooldown": 60},
         SOURCE_GALLERYDL: {"min_interval": 0.75, "jitter": 0.50, "max_inflight": 2, "cooldown": 60},
     }
@@ -194,14 +204,18 @@ class Download:
             SOURCE_BIZHIHUI,
             SOURCE_CATAAS,
             SOURCE_THEDOGAPI,
+            SOURCE_RANDOMUSER,
+            SOURCE_BAIDU,
             SOURCE_YTDLP,
             SOURCE_GALLERYDL,
         ):
             raise ValueError("不支持的图片来源：{0}".format(source))
         self.source = source
-        self.source_referer = (
-            self.BIZHIHUI_BASE_URL if source == SOURCE_BIZHIHUI else "https://www.vcg.com/"
-        )
+        self.source_referer = {
+            SOURCE_BIZHIHUI: self.BIZHIHUI_BASE_URL,
+            SOURCE_RANDOMUSER: self.RANDOMUSER_BASE_URL,
+            SOURCE_BAIDU: self.BAIDU_BASE_URL,
+        }.get(source, "https://www.vcg.com/")
         self.save_file_path = None
         self.img_progress_queue = None
         self.child_process_status_queue = None
@@ -209,6 +223,7 @@ class Download:
         self._thread_local = None
         self._manifest_lock = threading.Lock()
         self._manifest_path = None
+        self._source_records = {}
         self._manifest_saved = 0
         self._manifest_hashes = set()
         policy = self.SOURCE_POLICIES[self.source]
@@ -541,6 +556,10 @@ class Download:
             name_prefix = "猫_{0}".format(name_prefix)
         elif self.source == SOURCE_THEDOGAPI:
             name_prefix = "狗_{0}".format(name_prefix)
+        elif self.source == SOURCE_RANDOMUSER:
+            name_prefix = "人像_{0}".format(name_prefix)
+        elif self.source == SOURCE_BAIDU:
+            name_prefix = "百度人像_{0}".format(name_prefix)
         elif self.source == SOURCE_YTDLP:
             name_prefix = "视频封面_{0}".format(name_prefix)
         elif self.source == SOURCE_GALLERYDL:
@@ -607,6 +626,23 @@ class Download:
         elif self.source == SOURCE_THEDOGAPI:
             metadata["category"] = "dog"
             metadata["source_id"] = os.path.splitext(urlparse(src).path.rsplit("/", 1)[-1])[0]
+        elif self.source == SOURCE_RANDOMUSER:
+            metadata["category"] = "human-face"
+            randomuser_path = urlparse(src).path
+            marker = "/portraits/"
+            if marker in randomuser_path:
+                metadata["source_id"] = randomuser_path.split(marker, 1)[1].rsplit(".", 1)[0]
+            else:
+                metadata["source_id"] = os.path.splitext(randomuser_path.rsplit("/", 1)[-1])[0]
+        elif self.source == SOURCE_BAIDU:
+            metadata["category"] = "human-face-search"
+            record = self._source_records.get(src, {})
+            metadata.update({
+                "source_page_url": record.get("source_page_url"),
+                "source_page_title": record.get("source_page_title"),
+                "search_width": record.get("width"),
+                "search_height": record.get("height"),
+            })
         elif self.source == SOURCE_YTDLP:
             metadata["category"] = "video-cover"
         elif self.source == SOURCE_GALLERYDL:
@@ -881,6 +917,10 @@ class Download:
             return self._iter_cataas_web()
         if self.source == SOURCE_THEDOGAPI:
             return self._iter_thedogapi_web()
+        if self.source == SOURCE_RANDOMUSER:
+            return self._iter_randomuser_web()
+        if self.source == SOURCE_BAIDU:
+            return self._iter_baidu_web()
         if self.source == SOURCE_YTDLP:
             return self._iter_ytdlp_web()
         if self.source == SOURCE_GALLERYDL:
@@ -956,6 +996,107 @@ class Download:
                     "TheDogAPI 已发现 {0} 张狗图片".format(len(seen))
                 )
                 if added == 0:
+                    break
+        finally:
+            session.close()
+
+    def _iter_randomuser_web(self):
+        """获取公开的人像素材 URL，只请求 picture 字段。"""
+        session = self._new_session()
+        seen = set()
+        target_results = min(5000, max(100, self.target_count * 3))
+        params = {
+            "results": target_results,
+            "inc": "picture",
+            "noinfo": "",
+        }
+        gender = self.key_word.strip().lower()
+        if gender in ("男", "男性", "male", "man", "men"):
+            params["gender"] = "male"
+        elif gender in ("女", "女性", "female", "woman", "women"):
+            params["gender"] = "female"
+        try:
+            response = self._request_get(
+                session,
+                self.RANDOMUSER_API_URL,
+                params=params,
+                headers={"Accept": "application/json"},
+                timeout=self.REQUEST_TIMEOUT,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            for item in payload.get("results", []) if isinstance(payload, dict) else []:
+                picture = item.get("picture") if isinstance(item, dict) else None
+                image_url = picture.get("large") if isinstance(picture, dict) else None
+                if not image_url or image_url in seen:
+                    continue
+                seen.add(image_url)
+                yield str(image_url)
+            self.trans_log_to_ui(
+                "Random User 已发现 {0} 张真实人像".format(len(seen))
+            )
+        finally:
+            session.close()
+
+    def _iter_baidu_web(self):
+        """通过百度图片搜索接口获取公开搜索结果中的图片直链。"""
+        session = self._new_session()
+        seen = set()
+        search_word = self.key_word.strip() or "真人头像"
+        page_size = 30
+        max_pages = max(3, min(50, (self.target_count * 3 + page_size - 1) // page_size))
+        try:
+            for page in range(max_pages):
+                page_offset = page * page_size
+                source_page_url = (
+                    "{0}search/index?tn=baiduimage&word={1}&pn={2}&rn={3}"
+                    .format(self.BAIDU_BASE_URL, quote(search_word), page_offset, page_size)
+                )
+                response = self._request_get(
+                    session,
+                    self.BAIDU_API_URL,
+                    params={
+                        "tn": "resultjson_com",
+                        "word": search_word,
+                        "pn": page_offset,
+                        "rn": page_size,
+                        "ie": "utf-8",
+                        "oe": "utf-8",
+                        "format": "json",
+                    },
+                    headers={"Accept": "application/json", "Referer": self.BAIDU_BASE_URL},
+                    timeout=self.REQUEST_TIMEOUT,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                rows = payload.get("data", []) if isinstance(payload, dict) else []
+                added = 0
+                for item in rows:
+                    if not isinstance(item, dict):
+                        continue
+                    image_url = next(
+                        (
+                            str(item[key]).strip()
+                            for key in ("middleURL", "thumbURL", "hoverURL")
+                            if item.get(key) and str(item[key]).startswith(("http://", "https://"))
+                        ),
+                        "",
+                    )
+                    if not image_url or image_url in seen:
+                        continue
+                    seen.add(image_url)
+                    self._source_records[image_url] = {
+                        "source_page_url": source_page_url,
+                        "source_page_title": item.get("fromPageTitle"),
+                        "width": item.get("width"),
+                        "height": item.get("height"),
+                    }
+                    added += 1
+                    yield image_url
+                self.trans_log_to_ui(
+                    "百度图片已发现 {0} 张人像候选".format(len(seen))
+                )
+                if added == 0 or len(seen) >= self.target_count * 3:
                     break
         finally:
             session.close()

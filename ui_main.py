@@ -189,6 +189,8 @@ class UI_Work():
             vcg.SOURCE_BIZHIHUI: '壁纸汇自动解析详情页并选择最高直链画质，下载会自动限速。',
             vcg.SOURCE_CATAAS: 'CATAAS 提供猫图片，最多 4 路并发，自动延迟、冷却并记录 SHA-256。',
             vcg.SOURCE_THEDOGAPI: 'TheDogAPI 提供狗图片，最多 4 路并发，自动延迟、冷却并记录 SHA-256。',
+            vcg.SOURCE_RANDOMUSER: 'Random User 提供约 128×128 的真实人像头像，可输入男或女筛选，来源 URL 和 SHA-256 会记录到清单。',
+            vcg.SOURCE_BAIDU: '百度图片通过搜索关键词获取真人图片候选，默认关键词为真人头像，来源页和 SHA-256 会记录到清单。',
             vcg.SOURCE_YTDLP: '输入视频 URL，使用 yt-dlp 获取视频封面，最多 2 路并发并自动限速。',
             vcg.SOURCE_GALLERYDL: '输入图片站点 URL，使用 gallery-dl 解析图片，最多 2 路并发并自动限速。',
         }
